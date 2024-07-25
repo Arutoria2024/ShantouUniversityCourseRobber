@@ -5,7 +5,7 @@ from playwright.sync_api import Page, Browser
 from playwright.sync_api import sync_playwright
 
 # 注释
-print("此程序由王孜开发，仅用以学习交流使用，请勿滥用此软件")
+print("此程序由子文开发，仅用以学习交流使用，请勿滥用此软件")
 print("使用脚本时请退出正在登录的选课系统，否则会冲突导致程序无法正确运行")
 print("1、此脚本可能因校园网站卡顿而报错，只需重新打开即可")
 print("2、账号密码输错时重开即可")

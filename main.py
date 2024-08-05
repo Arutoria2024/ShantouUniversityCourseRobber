@@ -1,71 +1,162 @@
 import os
+import shutil
 import sys
-import tkinter as tk
-from idlelib import browser
-from tkinter import ttk
-from tkinter import messagebox
-from playwright.sync_api import Page
-from playwright.sync_api import sync_playwright
+import interface
+import opencv
+from playwright.sync_api import Page, sync_playwright
+from PyQt5.QtCore import Qt, QSettings  # 合并 PyQt5.QtCore 导入
+from PyQt5.QtWidgets import QApplication, QMainWindow
+from qfluentwidgets import (
+    InfoBarIcon,
+    TeachingTip,
+    TeachingTipTailPosition,
+)
 
-class App(ttk.Frame):
-    def __init__(self, parent):
-        ttk.Frame.__init__(self)
+from interface import *
+from login import *  # 建议检查是否可以避免使用 `from ... import *`
 
-        # Make the app responsive
-        self.choosing_frame = None
-        self.login_frame = None
-        self.parent = parent
-        for index in [0, 1, 2]:
-            self.columnconfigure(index=index, weight=1)
-            self.rowconfigure(index=index, weight=1)
 
-        # 创建变量存储用户名和密码
-        self.username = tk.StringVar()
-        self.password = tk.StringVar()
-        # 创建登录界面
-        self.create_login_widgets()
 
-    def create_login_widgets(self):
-        # 创建登录表单
-        self.login_frame = ttk.LabelFrame(self, text="用户登录", padding=(20, 10))
-        self.login_frame.grid(row=0, column=0, padx=(20, 10), pady=(20, 10), sticky="nsew")
+# 获取当前脚本所在目录
+executable_dir = os.path.dirname(os.path.abspath('main.py'))  # 记得将目录改为sys.executable
+# 构建 Chrome.exe 路径
+chrome_exe_path = os.path.join(executable_dir, "chrome-win", "chrome.exe")
+class loginWindow(QMainWindow):
+    def __init__(self):  # 修正初始化方法名称
+        super().__init__()
+        self.ui = Ui_LoginWindow()
+        self.ui.setupUi(self)
+        # 隐藏窗口
+        self.setWindowFlags(QtCore.Qt.FramelessWindowHint)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+        # 加阴影
+        self.ui.label.setGraphicsEffect(QtWidgets.QGraphicsDropShadowEffect(blurRadius=25, xOffset=0, yOffset=0))
+        self.ui.username_input.setGraphicsEffect(QtWidgets.QGraphicsDropShadowEffect(blurRadius=5, xOffset=0, yOffset=0))
+        self.ui.password_input.setGraphicsEffect(QtWidgets.QGraphicsDropShadowEffect(blurRadius=5, xOffset=0, yOffset=0))
+        self.ui.loginButton.setGraphicsEffect(QtWidgets.QGraphicsDropShadowEffect(blurRadius=25, xOffset=3, yOffset=3))
+        # 加跳转
+        self.ui.username_input.returnPressed.connect(self.ui.password_input.setFocus)
+        self.ui.password_input.returnPressed.connect(self.ui.loginButton.click)
+        self.ui.loginButton.clicked.connect(self.login_in)
+        self.ui.memory_checkBox.stateChanged.connect(self.save_account)
+        self.show()
 
-        # 用户名
-        ttk.Label(self.login_frame, text="用户名:").grid(row=0, column=0, padx=5, pady=10, sticky="w")
-        ttk.Entry(self.login_frame, textvariable=self.username).grid(row=0, column=1, padx=5, pady=10, sticky="ew")
+    def save_account(self, state):
+        """
+                根据勾选状态保存或清除账号密码。
 
-        # 密码
-        ttk.Label(self.login_frame, text="密码:").grid(row=1, column=0, padx=5, pady=10, sticky="w")
-        ttk.Entry(
-            self.login_frame, textvariable=self.password, show="*").grid(row=1, column=1, padx=5, pady=10,sticky="ew")
+                Args:
+                    state (int): 勾选状态，2 表示勾选，0 表示未勾选。
+                """
+        if state == Qt.Checked:
+            username = self.ui.username_input.text()
+            password = self.ui.password_input.text()
+            self.save_credentials(username, password)
+        else:
+            self.clear_credentials()
 
-        # 登录按钮
-        ttk.Button(self.login_frame, text="登录", command=self.login).grid(
-            row=2, column=0, columnspan=2, padx=5,pady=10, sticky="ew")
+    def save_credentials(self, username, password):
+        """
+        将账号密码保存到安全的位置，例如使用 QSettings。
 
-    def login(self):
-        # 获取用户名和密码
-        username = self.username.get()
-        password = self.password.get()
+        Args:
+            username (str): 用户名。
+            password (str): 密码。
+        """
+        settings = QSettings("STU", "CourseAssistant")
+        settings.setValue("username", username)
+        settings.setValue("password", password)
 
-        # 简单验证用户名和密码是否为空
-        if not username or not password:
-            messagebox.showerror("错误", "请输入用户名和密码！")
-            return
+    def clear_credentials(self):
+        """
+        清除保存的账号密码。
+        """
+        settings = QSettings("STU", "CourseAssistant")
+        settings.remove("username")
+        settings.remove("password")
 
-        # 尝试登录
-        try:
-            self.start_grabbing(username, password)
-        except Exception as e:
-            messagebox.showerror("错误", f"登录失败：{str(e)}")
+    def load_credentials(self):
+        """
+        加载保存的账号密码。
 
-    def start_grabbing(self, username, password):
-        def main():
-            # 获取当前脚本所在目录
-            executable_dir = os.path.dirname(sys.executable)
-            # 构建 Chrome.exe 路径
-            chrome_exe_path = os.path.join(executable_dir, "chrome-win", "chrome.exe")
-            print(chrome_exe_path)
+        Returns:
+            tuple: 包含用户名和密码的元组，如果未保存则返回 None。
+        """
+        settings = QSettings("STU", "CourseAssistant")
+        username = settings.value("username")
+        password = settings.value("password")
+        if username and password:
+            return username, password
+        else:
+            return None
+
+    def showEvent(self, event):
+        """
+        在窗口显示时自动填充账号密码。
+        """
+        super().showEvent(event)
+        credentials = self.load_credentials()
+        if credentials:
+            self.ui.username_input.setText(credentials[0])
+            self.ui.password_input.setText(credentials[1])
+            self.ui.memory_checkBox.setChecked(True)
+
+    # 拖动
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton and self.isMaximized() == False:
+            self.m_flag = True
+            self.m_Position = event.globalPos() - self.pos()  # 获取鼠标相对窗口的位置
+            event.accept()
+            self.setCursor(QtGui.QCursor(QtCore.Qt.OpenHandCursor))  # 更改鼠标图标
+
+    def mouseMoveEvent(self, mouse_event):
+        if QtCore.Qt.LeftButton and self.m_flag:
+            self.move(mouse_event.globalPos() - self.m_Position)  # 更改窗口位置
+            mouse_event.accept()
+
+    def mouseReleaseEvent(self, mouse_event):
+        self.m_flag = False
+        self.setCursor(QtGui.QCursor(QtCore.Qt.ArrowCursor))
+
+    def showTeachingTip(self):
+        TeachingTip.create(
+            target=self.ui.loginButton,
+            icon=InfoBarIcon.WARNING,
+            title='警告',
+            content="账号或密码不能为空",
+            isClosable=True,
+            tailPosition=TeachingTipTailPosition.BOTTOM,
+            duration=2000,
+            parent=self
+        )
+    def showAccountTip(self):
+        TeachingTip.create(
+            target=self.ui.loginButton,
+            icon=InfoBarIcon.WARNING,
+            title='警告',
+            content="账号或密码错误\n请输入校园网账号",
+            isClosable=True,
+            tailPosition=TeachingTipTailPosition.BOTTOM,
+            duration=2000,
+            parent=self
+        )
+    def showSysTip(self):
+        TeachingTip.create(
+            target=self.ui.loginButton,
+            icon=InfoBarIcon.WARNING,
+            title='警告',
+            content="选课系统未开放",
+            isClosable=True,
+            tailPosition=TeachingTipTailPosition.BOTTOM,
+            duration=2000,
+            parent=self
+        )
+    def login_in(self):
+        username = self.ui.username_input.text()
+        password = self.ui.password_input.text()
+        if not username and not password:
+            self.showTeachingTip()
+        else:
             # 使用 Playwright
             with sync_playwright() as p:
                 browser = p.chromium.launch(executable_path=chrome_exe_path)  # 指定驱动文件路径
@@ -80,236 +171,302 @@ class App(ttk.Frame):
                 page.fill("#password", password)
                 # 点击登录按钮
                 page.click('#login')
-
                 # 等待页面加载完成
                 page.wait_for_load_state("networkidle")
-                # 切换到母iframe中点选课中心
-                page.frame_locator("#Frame0").locator('body > div.person > div.person-top > ul > li:nth-child(5)').click()
-                # 判断系统有无开放
-                judge = page.frame_locator("#FrameNEW_XSD_PYGL_XKGL_NXSXKZX").locator(
-                    "body > div > div.content > div > table > tbody > tr > td:nth-child(4) > span").count()
-                print(judge)
-                if judge == 0:
-                    messagebox.showinfo("提示", "系统暂未开放！")
+                # 检查账号是否输入正确
+                nmp = page.locator("#login_error").count()
+                if nmp == 1:
+                    self.ui.username_input.clear()
+                    self.ui.password_input.clear()
+                    self.showAccountTip()
                 else:
-                    # 登录成功后隐藏登录界面
-                    self.login_frame.grid_forget()
+                    # 切换到母iframe中点选课中心
+                    page.frame_locator("#Frame0").locator(
+                        'body > div.person > div.person-top > ul > li:nth-child(5)').click()
+                    element_count = page.frame_locator("#Frame0").locator("body > div > div.content > div").count()
+                    if element_count == 0:
+                        self.showSysTip()
+                    else:
+                        self.win = MainWindow(username, password)
+                        self.close()
 
-                    # 创建抢课界面
-                    self.create_choosing_widgets(page)
+class MainWindow(QtWidgets.QMainWindow,interface.Ui_MainWindow):
+    def __init__(self, username, password):  # 修正初始化方法名称
+        super().__init__()
+        self.ui = Ui_MainWindow()
+        self.ui.setupUi(self)
+        # 获取目录
+        self.parent_image_file = None
+        #允许窗体接受拖拽
+        self.setAcceptDrops(True)
+        #隐藏窗口
+        self.setWindowFlags(QtCore.Qt.FramelessWindowHint)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+        self.ui.comboBox.currentIndexChanged.connect(self.on_combobox_changed)
+        self.a0 = ''
+        self.course_type = '专业课'
+        self.username = username
+        self.password = password
+        self.ciframe = None
+        self.ui.lineEdit.searchSignal.connect(self.update_a0)
+        self.ui.startButton.clicked.connect(self.changeLamba)
+        self.ui.StartRec.clicked.connect(self.OCR_Process)
 
-        def choose_majoy_course(self, page):
-            # 切换到 表格iframe 中 并点击专业选课按钮
-            # 定位父 iframe
-            aiframe = page.frame_locator("#FrameNEW_XSD_PYGL_XKGL_NXSXKZX")
+        self.show()
 
-            # 定位子 iframe (selectBottom)
+    def init_browser_and_navigate(self):
+        """初始化浏览器并导航到目标页面"""
+
+
+        with sync_playwright() as p:
+            self.browser = p.chromium.launch(executable_path=chrome_exe_path)
+            self.page = self.browser.new_page()
+            self.page.goto("https://sso.stu.edu.cn/login?service=http%3A%2F%2Fjw.stu.edu.cn%2F")
+            self.page.fill("#username", self.username)
+            self.page.fill("#password", self.password)
+            self.page.click('#login')
+            self.page.wait_for_load_state("networkidle")
+            self.page.frame_locator("#Frame0").locator(
+                'body > div.person > div.person-top > ul > li:nth-child(5)').click()
+            self.page.frame_locator("#FrameNEW_XSD_PYGL_XKGL_NXSXKZX").locator(
+                "body > div > div.content > div > table > tbody > tr > td:nth-child(4) > span").click()
+            self.page.wait_for_load_state("networkidle")
+
+            # 定位 iframe 元素
+            aiframe = self.page.frame_locator("#FrameNEW_XSD_PYGL_XKGL_NXSXKZX")
             biframe = aiframe.frame_locator("#selectBottom")
+            self.ciframe = biframe.frame_locator("#selectTable")
 
-            # 在子 iframe 内定位元素并点击
-            biframe.locator("body > div.bottom1 > div > ul > li:nth-child(2)").click()
+    def workingTip(self):
+        TeachingTip.create(
+            target=self.ui.lineEdit,
+            icon=InfoBarIcon.INFORMATION,
+            title='通告',
+            content="由于平时学校并不开启选课系统，所以像根据教师名称搜素、搜寻结果显示等，暂未开发",
+            isClosable=True,
+            tailPosition=TeachingTipTailPosition.BOTTOM,
+            duration=2000,
+            parent=self
+        )
 
-            # 定位表格 iframe
-            ciframe = biframe.frame_locator("#selectTable")
+    def showImageXTip(self):
+        TeachingTip.create(
+            target=self.ui.lineEdit_3,
+            icon=InfoBarIcon.INFORMATION,
+            title='警告',
+            content="图片路径错误，请重新写入/拖入图片路径",
+            isClosable=True,
+            tailPosition=TeachingTipTailPosition.BOTTOM,
+            duration=2000,
+            parent=self
+        )
 
-            # 在表格 iframe 内定位并点击专业选课按钮
-            ciframe.locator("body > div:nth-child(13) > label:nth-child(9) > i").click()
-            ciframe.locator("body > div:nth-child(13) > label:nth-child(10) > i").click()
-            # 循环，直到查询到课程数据
-            while True:
-                # 输入课程名称
-                classname = input("请输入课程名称: ")
-                # 定位并输入课程名称
-                x = ciframe.locator("#kcxx")
-                x.fill(classname)
-                # 提交查询
-                ciframe.locator("body > div:nth-child(13) > input.button").click()
-                # 等待查询结果
-                ciframe.wait_for_selector(" #dataView_info")
+    def showImageTip(self):
+        TeachingTip.create(
+            target=self.ui.lineEdit_3,
+            icon=InfoBarIcon.SUCCESS,
+            title='消息',
+            content="图片导入成功",
+            isClosable=True,
+            tailPosition=TeachingTipTailPosition.BOTTOM,
+            duration=2000,
+            parent=self
+        )
 
-                # 判断查询结果,获取元素文本
-                y = ciframe.locator('#dataView_info')
-                y.wait_for()
-                a1 = y.text_content()
-                if "显示 0 至 0 共 0 项" != a1:  # 注意：这里判断条件改为“不等于”
-                    # 执行其他操作
-                    print("查询到数据:")
-                    # 反馈查询结果
-                    print("发现", a1, "个结果")
-                    print("开始抢课(/≧▽≦)/")
+    def wrongTip(self):
+        TeachingTip.create(
+            target=self.ui.lineEdit,
+            icon=InfoBarIcon.WARNING,
+            title='警告',
+            content="没有查寻到该课程",
+            isClosable=True,
+            tailPosition=TeachingTipTailPosition.BOTTOM,
+            duration=2000,
+            parent=self
+        )
 
-                    # 利用网站进行筛选
-                    ciframe.locator(
-                        "body > div:nth-child(13) > label:nth-child(8) > i").click()
-                    ciframe.locator(
-                        "body > div:nth-child(13) > label:nth-child(9) > i").click()
-                    ciframe.locator(
-                        "body > div:nth-child(13) > label:nth-child(10) > i").click()
-                    inum = 0
-                    while True:
-                        inum = inum + 1
-                        # 点击查询按钮
-                        n = ciframe.locator("body > div:nth-child(13) > input.button")
-                        n.wait_for()
-                        n.click()
-                        # 使用 WebDriverWait 等待元素出现
-                        ciframe.wait_for_selector('#dataView > tbody > tr > td')
-                        # 获取元素文本并判断
-                        y = ciframe.locator('#dataView_info')
-                        y.wait_for()
-                        a1 = y.text_content()
-                        z = ciframe.locator("a[href*='xsxkOper']")
-                        numz = z.count()
-                        print("已查询", inum,"次")
+    def showSuccessTip(self):
+        TeachingTip.create(
+            target=self.ui.startButton,
+            icon=InfoBarIcon.SUCCESS,
+            title='恭喜',
+            content="抢课成功",
+            isClosable=True,
+            tailPosition=TeachingTipTailPosition.BOTTOM,
+            duration=2000,
+            parent=self
+        )
 
-                        if "显示 0 至 0 共 0 项" != a1:  # 注意：这里判断条件改为“不等于”
-                            # 开选
-                            ciframe.wait_for_selector("a[href*='xsxkOper']")
-                            # 遍历每个链接并点击(抽空整这功能)
-                            for i in range(numz):
-                                ciframe.locator("a[href*='xsxkOper']").nth(i).click()  # 遍历所有链接并点击
-                            print("恭喜恭喜[]~(￣▽￣)~*，这门课抢课成功<(￣︶￣)>")
-                            print("先别急的关，记得手动点安全退出")
-                            # 等待用户输入，程序不会自动关闭
-                            input("按 Enter 键退出程序...")
-                            # 关闭浏览器
-                            browser.close()
-                            break
+    def showSearchTip(self):
+        TeachingTip.create(
+            target=self.ui.lineEdit,
+            icon=InfoBarIcon.SUCCESS,
+            title='查询成功',
+            content="已查询到对应课程",
+            isClosable=True,
+            tailPosition=TeachingTipTailPosition.BOTTOM,
+            duration=2000,
+            parent=self
+        )
 
-                else:
+    def showSearchXTip(self):
+        TeachingTip.create(
+            target=self.ui.lineEdit,
+            icon=InfoBarIcon.WARNING,
+            title='查询失败',
+            content="请输入正确课程名称",
+            isClosable=True,
+            tailPosition=TeachingTipTailPosition.BOTTOM,
+            duration=2000,
+            parent=self
+        )
+    # 获得搜索文本
+    def update_a0(self, text):
+        self.a0 = text
+        self.SearchProcess()
 
-                    # 提示用户重新输入
-                    print("查询结果为空，请重新输入课程名称")
-                    # 清空课程名称输入框
-                    x.fill("")
+    def SearchProcess(self):
+        self.init_browser_and_navigate()
+        if self.course_type == '专业课':
+            self.ciframe.locator("body > div:nth-child(13) > label:nth-child(9) > i").click()
+            self.ciframe.locator("body > div:nth-child(13) > label:nth-child(10) > i").click()
+        elif self.course_type == '公选课':
+            self.ciframe.locator("body > div.search-form-content > div > label:nth-child(9) > i").click()
+            self.ciframe.locator("body > div.search-form-content > div > label:nth-child(10) > i").click()
+        self.search_course()
 
-        def choose_public_course(self, page):
-            # 切换到 表格iframe 中 并点击公选课按钮
-            # 定位父 iframe
-            aiframe = page.frame_locator("#FrameNEW_XSD_PYGL_XKGL_NXSXKZX")
+    # 获得选课类型
+    def on_combobox_changed(self, index):
+        self.course_type = self.ui.comboBox.itemText(index)
 
-            # 定位子 iframe (selectBottom)
-            biframe = aiframe.frame_locator("#selectBottom")
+    def select_course(self):
+        """选择课程"""
+        if self.course_type == '专业课':
+            self.ciframe.locator("body > div:nth-child(13) > label:nth-child(8) > i").click()
+            self.ciframe.locator("body > div:nth-child(13) > label:nth-child(9) > i").click()
+            self.ciframe.locator("body > div:nth-child(13) > label:nth-child(10) > i").click()
+            selector = "a[href*='xsxkOper']"
+        elif self.course_type == '公选课':
+            self.ciframe.locator("body > div.search-form-content > div > label:nth-child(8) > i").click()
+            self.ciframe.locator("body > div.search-form-content > div > label:nth-child(9) > i").click()
+            self.ciframe.locator("body > div.search-form-content > div > label:nth-child(10) > i").click()
+            selector = "a[href*='xsxkFun']"
 
-            # 在子 iframe 内定位元素并点击
-            biframe.locator("body > div.bottom1 > div > ul > li:nth-child(3)").click()
+        inum = 0
+        while True:
+            inum += 1
+            if self.course_type == '专业课':
+                self.ciframe.locator("body > div:nth-child(13) > input.button").click()
+            elif self.course_type == '公选课':
+                self.ciframe.locator('body > div.search-form-content > div > input:nth-child(11)').click()
 
-            # 定位表格 iframe
-            ciframe = biframe.frame_locator("#selectTable")
+            self.ciframe.wait_for_selector('#dataView > tbody > tr > td')
+            result_text = self.ciframe.locator('#dataView_info').text_content()
+            numz = self.ciframe.locator(selector).count()
 
-            # 去筛选
-            ciframe.locator("body > div.search-form-content > div > label:nth-child(9) > i").click()
-            ciframe.locator("body > div.search-form-content > div > label:nth-child(10) > i").click()
-            # 循环，直到查询到课程数据
-            while True:
-                # 输入课程名称
-                classname = input("请输入课程名称: ")
-                # 定位并输入课程名称
-                x = ciframe.locator("#kcxx")
-                x.fill(classname)
-                # 提交查询
-                ciframe.locator('body > div.search-form-content > div > input:nth-child(11)').click()
-                # 等待查询结果
-                ciframe.wait_for_selector(" #dataView_info")
+            if "显示 0 至 0 共 0 项" != result_text:
+                self.ciframe.wait_for_selector(selector)
+                for i in range(numz):
+                    self.ciframe.locator(selector).nth(i).click()
+                self.showSuccessTip()
+                self.browser.close()
+                break
+    # 主程序
+    def MainProcess(self):
 
-                # 判断查询结果,获取元素文本
-                y = ciframe.locator('#dataView_info')
-                y.wait_for()
-                a1 = y.text_content()
-                a2 = a1.strip("当前显示 ")
-                if "显示 0 至 0 共 0 项" != a1:  # 注意：这里判断条件改为“不等于”
-                    # 执行其他操作
-                    print("查询到数据:")
-                    # 反馈查询结果
-                    print("发现", a2, "个结果")
-                    print("开始抢课(/≧▽≦)/")
+        self.init_browser_and_navigate()
 
-                    # 利用网站进行筛选
-                    ciframe.locator(
-                        "body > div.search-form-content > div > label:nth-child(8) > i").click()
-                    ciframe.locator(
-                        "body > div.search-form-content > div > label:nth-child(9) > i").click()
-                    ciframe.locator(
-                        "body > div.search-form-content > div > label:nth-child(10) > i").click()
-                    inum = 0
-                    while True:
-                        inum = inum + 1
-                        print("已查询", inum, "次")
-                        # 点击查询按钮
-                        ciframe.locator('body > div.search-form-content > div > input:nth-child(11)').click()
-                        # 使用 WebDriverWait 等待元素出现
-                        ciframe.wait_for_selector('#dataView_info')
-                        # 获取元素文本并判断
-                        y = ciframe.locator('#dataView_info')
-                        y.wait_for()
-                        a1 = y.text_content()
-                        z = ciframe.locator("a[href*='xsxkFun']")
-                        numz = z.count()
+        def on_dialog(dialog):
+            print('Dialog message:', dialog.message)
+            dialog.accept()
+            print("弹窗已处理")
 
-                        if "显示 0 至 0 共 0 项" != a1:  # 注意：这里判断条件改为“不等于”
-                            # 开选
-                            ciframe.wait_for_selector("a[href*='xsxkFun']")
-                            # 遍历每个链接并点击(抽空整这功能)
-                            for i in range(numz):
-                                ciframe.locator("a[href*='xsxkFun']").nth(i).click()  # 遍历所有链接并点击
-                            print("恭喜恭喜[]~(￣▽￣)~*，这门课抢课成功<(￣︶￣)>")
-                            print("先别急的关，记得手动点安全退出")
-                            # 等待用户输入，程序不会自动关闭
-                            input("按 Enter 键退出程序...")
-                            # 关闭浏览器
-                            browser.close()
-                            break
-                else:
+        self.page.on('dialog', on_dialog)
 
-                    # 提示用户重新输入
-                    print("查询结果为空，请重新输入课程名称")
-                    # 清空课程名称输入框
-                    x.fill("")
+        if self.course_type == '专业课':
+            self.ciframe.locator("body > div:nth-child(13) > label:nth-child(9) > i").click()
+            self.ciframe.locator("body > div:nth-child(13) > label:nth-child(10) > i").click()
+        elif self.course_type == '公选课':
+            self.ciframe.locator("body > div.search-form-content > div > label:nth-child(9) > i").click()
+            self.ciframe.locator("body > div.search-form-content > div > label:nth-child(10) > i").click()
 
-        # 在新线程中启动抢课逻辑
-        import threading
-        threading.Thread(target=main).start()
+        while True:
+            if self.search_course():
+                self.select_course()
+                break
 
-    def create_grabbing_widgets(self, page):
-        # ... 创建抢课界面的 widgets ...
-        # 例如：课程选择、操作按钮等
-        pass  # 这里需要根据实际需求补充
+    def OCR_Process(self):
+        if self.parent_image_file is None:
+            self.showImageXTip()
+        else:
+            self.showImageTip()
+            # 构建 母版图片 路径
+            parent_image_dir = os.path.join(executable_dir, "parent_image")
 
-    def create_choosing_widgets(self, page):
-        # 创建选择表单
-        self.choosing_frame = ttk.LabelFrame(self, text="选课类型选择", padding=(20, 10))
-        self.choosing_frame.grid(row=0, column=0, padx=(20, 10), pady=(20, 10), sticky="nsew")
+            shutil.copy2(self.parent_image_file, parent_image_dir)
 
-        # 专业课按钮
-        ttk.Button(self.choosing_frame, text="专业课", command=lambda: self.choose_majoy_course(page)).grid(
-            row=0, column=0, padx=5, pady=10, sticky="ew")
-        # 公选课按钮
-        ttk.Button(self.choosing_frame, text="公选课", command=lambda: self.choose_public_course(page)).grid(
-            row=0, column=1, padx=5, pady=10, sticky="ew")
+            opencv.rename_chinese_files(parent_image_dir)
 
-    def choose_majoy_course(self, page):
-        pass
+            results = opencv.detect_and_recognize(parent_image_dir)
+            # 处理识别结果
+            for item in results:
+                print(item["course"])
+                print(item["teacher"])
+            # 清空表格内容
+            self.ui.tableWidget.setRowCount(0)
 
-    def choose_public_course(self, page):
-        pass
+            # 添加识别结果到表格
+            for row, item in enumerate(results):
+                self.ui.tableWidget.insertRow(row)
 
+                course_item = QtWidgets.QTableWidgetItem(item["course"])
+                course_item.setTextAlignment(QtCore.Qt.AlignCenter)
+                self.ui.tableWidget.setItem(row, 0, course_item)
 
-if __name__ == "__main__":
-    root = tk.Tk()
-    root.title("抢课软件")
+                teacher_item = QtWidgets.QTableWidgetItem(item["teacher"])
+                teacher_item.setTextAlignment(QtCore.Qt.AlignCenter)
+                self.ui.tableWidget.setItem(row, 1, teacher_item)
+    # 拖动
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton and self.isMaximized() == False:
+            self.m_flag = True
+            self.m_Position = event.globalPos() - self.pos()  # 获取鼠标相对窗口的位置
+            event.accept()
+            self.setCursor(QtGui.QCursor(QtCore.Qt.OpenHandCursor))  # 更改鼠标图标
 
-    # 设置 Azure 主题
-    root.tk.call("source", "azure.tcl")
-    root.tk.call("set_theme", "light")
+    def mouseMoveEvent(self, mouse_event):
+        if QtCore.Qt.LeftButton and self.m_flag:
+            self.move(mouse_event.globalPos() - self.m_Position)  # 更改窗口位置
+            mouse_event.accept()
 
-    app = App(root)
-    app.pack(fill="both", expand=True)
+    def mouseReleaseEvent(self, mouse_event):
+        self.m_flag = False
+        self.setCursor(QtGui.QCursor(QtCore.Qt.ArrowCursor))
 
-    # 设置窗口最小尺寸并居中
-    root.update()
-    root.minsize(root.winfo_width(), root.winfo_height())
-    x_cordinate = int((root.winfo_screenwidth() / 2) - (root.winfo_width() / 2))
-    y_cordinate = int((root.winfo_screenheight() / 2) - (root.winfo_height() / 2))
-    root.geometry("+{}+{}".format(x_cordinate, y_cordinate - 20))
+    def changeLamba(self):
+        if self.ui.startButton.text() == "开始抢课":
+            self.ui.startButton.setText("停止抢课")
+            self.MainProcess()
+        else:
+            self.ui.startButton.setText("开始抢课")
+    def dragEnterEvent(self, a0: QtGui.QDragEnterEvent) -> None:
+        #判断有没有接受到内容
+        if a0.mimeData().hasUrls():
+            #如果接收到内容了，就把它存在事件中
+            a0.accept()
+        else:
+            #没接收到内容就忽略
+            a0.ignore()
 
-    root.mainloop()
+    def dropEvent(self, a0: QtGui.QDropEvent) -> None:
+        if a0:
+            for i in a0.mimeData().urls():
+                print(i.path())
+                file_path = i.path()[1:]
+                self.ui.lineEdit_3.setText(file_path)
+                self.parent_image_file = file_path
+
+if __name__ == '__main__':  # 修正主程序入口条件判断
+    app = QApplication(sys.argv)
+    win = loginWindow()
+    sys.exit(app.exec_())
